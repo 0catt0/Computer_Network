@@ -1,5 +1,6 @@
 import java.io.*;
 import java.net.*;
+import java.util.concurrent.*;
 
 public class Client {
     private static final String CONFIG_FILE = "server_info.dat";
@@ -19,28 +20,51 @@ public class Client {
             }
         }
 
-        try (Socket socket = new Socket(serverAddress, serverPort);
-             BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-             PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
-             BufferedReader userInput = new BufferedReader(new InputStreamReader(System.in))) {
-
-            System.out.println("Connected to the server. Starting quiz...");
-            String question;
-
-            while ((question = in.readLine()) != null) {
-                if (question.startsWith("Quiz Over!")) {
-                    System.out.println(question);
-                    break;
+        try (
+                Socket socket = new Socket(serverAddress, serverPort);
+                BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
+                BufferedReader userInput = new BufferedReader(new InputStreamReader(System.in))
+        ) {
+            // Create separate thread for receiving server messages
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            Future<?> receiverFuture = executor.submit(() -> {
+                try {
+                    String serverMessage;
+                    while ((serverMessage = in.readLine()) != null) {
+                        if (serverMessage.startsWith("Question")) {
+                            System.out.println("\n" + serverMessage);
+                            System.out.print("Your answer: ");
+                        } else {
+                            System.out.println(serverMessage);
+                        }
+                    }
+                } catch (IOException e) {
+                    if (!socket.isClosed()) {
+                        System.err.println("Error receiving message from server: " + e.getMessage());
+                    }
                 }
-                System.out.println(question);
-                String answer = userInput.readLine();
-                out.println(answer);
+            });
 
-                String feedback = in.readLine();
-                System.out.println(feedback);
+            // Main thread handles user input
+            try {
+                String userAnswer;
+                while ((userAnswer = userInput.readLine()) != null) {
+                    out.println(userAnswer);
+                }
+            } catch (IOException e) {
+                System.err.println("Error sending message to server: " + e.getMessage());
             }
+
+            executor.shutdown();
+            try {
+                executor.awaitTermination(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                executor.shutdownNow();
+            }
+
         } catch (IOException e) {
-            e.printStackTrace();
+            System.err.println("Connection error: " + e.getMessage());
         }
     }
 }
